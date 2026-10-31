@@ -160,7 +160,8 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
         root.addView(fileLabel);
 
         surfaceView = new TextureView(this);
-        surfaceView.setBackgroundColor(Color.BLACK);
+        // TextureView forbids setting a background drawable. Calling setBackgroundColor
+        // here crashes on Activity startup with UnsupportedOperationException.
         surfaceView.setKeepScreenOn(true);
         surfaceView.setSurfaceTextureListener(this);
         root.addView(surfaceView, lp(-1, 210));
