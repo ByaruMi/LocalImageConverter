@@ -19,8 +19,9 @@ import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.database.Cursor;
 import android.view.Gravity;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
+import android.graphics.SurfaceTexture;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -42,7 +43,7 @@ import java.util.Locale;
  * repeated seek/glitch issue. Export copies encoded samples into MP4, only
  * adjusting timestamps. No FFmpeg, ads, network, or video re-encoding.
  */
-public class MainActivity extends Activity implements SurfaceHolder.Callback {
+public class MainActivity extends Activity implements TextureView.SurfaceTextureListener {
     private static final int PICK_VIDEO = 71;
     private static final int CREATE_MP4 = 72;
     private static final int MAX_OFFSET = 3000;
@@ -58,7 +59,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private String inputName = "";
     private MediaPlayer videoPlayer;
     private MediaPlayer audioPlayer;
-    private SurfaceView surfaceView;
+    private TextureView surfaceView;
+    private Surface videoSurface;
     private TextView fileLabel, offsetText, currentTime, durationText, hintText, statusText;
     private Button playButton, compareButton, exportButton;
     private SeekBar playbackSeek, offsetSeek;
@@ -157,10 +159,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         fileLabel.setPadding(dp(3), dp(8), dp(3), dp(8));
         root.addView(fileLabel);
 
-        surfaceView = new SurfaceView(this);
+        surfaceView = new TextureView(this);
         surfaceView.setBackgroundColor(Color.BLACK);
         surfaceView.setKeepScreenOn(true);
-        surfaceView.getHolder().addCallback(this);
+        surfaceView.setSurfaceTextureListener(this);
         root.addView(surfaceView, lp(-1, 210));
 
         addSpace(root, 10);
@@ -313,7 +315,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                     .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build());
             videoPlayer.setVolume(0f, 0f);
             videoPlayer.setDataSource(this, uri);
-            videoPlayer.setDisplay(surfaceView.getHolder());
+            // The document picker can return before Android recreates the video surface.
+            // Never bind a released SurfaceHolder ("The surface has been released").
+            attachSurfaceIfAvailable();
             videoPlayer.setOnPreparedListener(mp -> { if (generation != expected) return; preparedVideo = true; checkReady(); });
             videoPlayer.setOnCompletionListener(mp -> stopPlayback(false));
             videoPlayer.setOnSeekCompleteListener(mp -> {
@@ -342,10 +346,17 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     private void checkReady() {
-        if (ready()) status("재생 준비 완료 · 싱크를 조정한 뒤 MP4로 저장하세요.");
+        if (ready()) {
+            status(videoSurface == null ? "재생 준비 완료 · 화면이 연결될 때까지 기다리는 중…"
+                    : "재생 준비 완료 · 싱크를 조정한 뒤 MP4로 저장하세요.");
+        }
     }
     private void togglePlayback() {
         if (!ready()) { notifyError("먼저 영상을 불러와 주세요."); return; }
+        if (videoSurface == null || !videoSurface.isValid()) {
+            notifyError("영상 출력 화면을 준비 중입니다. 다시 재생해 주세요.");
+            return;
+        }
         if (playing) stopPlayback(true);
         else {
             try {
@@ -539,14 +550,37 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
-    @Override public void surfaceCreated(SurfaceHolder holder) {
-        if (videoPlayer != null) try { videoPlayer.setDisplay(holder); } catch (Exception ignored) { }
+    /** Attach the video output only when there is a valid, live SurfaceTexture. */
+    private void attachSurfaceIfAvailable() {
+        if (videoPlayer == null || videoSurface == null || !videoSurface.isValid()) return;
+        try {
+            videoPlayer.setSurface(videoSurface);
+        } catch (IllegalStateException e) {
+            status("영상 출력 연결 실패 · 영상을 다시 선택해 주세요.");
+        }
     }
-    @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { }
-    @Override public void surfaceDestroyed(SurfaceHolder holder) {
+
+    @Override public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
+        if (videoSurface != null) videoSurface.release();
+        videoSurface = new Surface(texture);
+        attachSurfaceIfAvailable();
+        checkReady();
+    }
+    @Override public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int width, int height) { }
+    @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
         if (playing) stopPlayback(true);
-        if (videoPlayer != null) try { videoPlayer.setDisplay(null); } catch (Exception ignored) { }
+        if (videoPlayer != null) {
+            try { videoPlayer.setSurface(null); } catch (IllegalStateException ignored) { }
+        }
+        if (videoSurface != null) { videoSurface.release(); videoSurface = null; }
+        return true;
     }
+    @Override public void onSurfaceTextureUpdated(SurfaceTexture texture) { }
     @Override protected void onPause() { super.onPause(); if (playing) stopPlayback(true); }
-    @Override protected void onDestroy() { ui.removeCallbacks(tick); releasePlayers(); super.onDestroy(); }
+    @Override protected void onDestroy() {
+        ui.removeCallbacks(tick);
+        releasePlayers();
+        if (videoSurface != null) { videoSurface.release(); videoSurface = null; }
+        super.onDestroy();
+    }
 }
