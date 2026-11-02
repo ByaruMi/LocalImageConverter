@@ -145,15 +145,11 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
         root.addView(subtitle);
         addSpace(root, 18);
 
-        Button select = button("  영상 불러오기", true);
+        Button select = button("  갤러리에서 영상 선택", true);
         root.addView(select, lp(-1, 52));
         select.setOnClickListener(v -> {
             if (exporting) return;
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("video/*");
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivityForResult(intent, PICK_VIDEO);
+            openGalleryPicker();
         });
         fileLabel = label("영상이 선택되지 않았습니다", 12, dim, false);
         fileLabel.setPadding(dp(3), dp(8), dp(3), dp(8));
@@ -274,6 +270,51 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
         if (requestCode == PICK_VIDEO) openVideo(data.getData());
         else if (requestCode == CREATE_MP4) exportTo(data.getData());
+    }
+
+    /**
+     * Prefer Samsung Gallery on Galaxy devices. If it is absent or does not
+     * expose a video picker, show the Android media gallery instead of Files.
+     */
+    private void openGalleryPicker() {
+        Intent samsungGallery = new Intent(Intent.ACTION_GET_CONTENT);
+        samsungGallery.setType("video/*");
+        samsungGallery.setPackage("com.sec.android.gallery3d");
+        samsungGallery.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivityForResult(samsungGallery, PICK_VIDEO);
+            return;
+        } catch (android.content.ActivityNotFoundException | SecurityException ignored) {
+            // Not every Samsung Gallery version exports a video-selection Activity.
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            Intent photoPicker = new Intent(android.provider.MediaStore.ACTION_PICK_IMAGES);
+            photoPicker.setType("video/*");
+            photoPicker.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            try {
+                startActivityForResult(photoPicker, PICK_VIDEO);
+                return;
+            } catch (android.content.ActivityNotFoundException | SecurityException ignored) {
+                // Fallback for devices with no platform photo picker.
+            }
+        }
+
+        Intent gallery = new Intent(Intent.ACTION_PICK);
+        gallery.setDataAndType(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video/*");
+        gallery.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivityForResult(gallery, PICK_VIDEO);
+        } catch (android.content.ActivityNotFoundException | SecurityException ignored) {
+            Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+            fallback.setType("video/*");
+            fallback.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            try {
+                startActivityForResult(Intent.createChooser(fallback, "동영상 선택"), PICK_VIDEO);
+            } catch (android.content.ActivityNotFoundException e) {
+                notifyError("영상을 선택할 갤러리 앱을 찾지 못했습니다.");
+            }
+        }
     }
 
     private String displayName(Uri uri) {
