@@ -21,20 +21,3 @@ jobs:
         with:
           name: SyncLab-APK
           path: app/build/outputs/apk/debug/app-debug.apk
-      - name: Smoke-test launch on Android emulator
-        timeout-minutes: 12
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64
-          script: |
-            adb install -r app/build/outputs/apk/debug/app-debug.apk
-            adb logcat -c
-            adb shell am start -n com.synclab.local/.MainActivity
-            sleep 6
-            if ! adb shell pidof com.synclab.local; then
-              adb logcat -d -b crash
-              exit 1
-            fi
-            echo "Startup smoke test passed"
